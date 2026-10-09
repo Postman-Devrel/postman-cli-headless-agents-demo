@@ -45,11 +45,18 @@ jobs:
           This is PR #${{ github.event.pull_request.number }} in ${{ github.repository }}.
           The base branch is origin/${{ github.event.pull_request.base.ref }}. Diff against it."
 
+          set -o pipefail
           claude -p "$PROMPT" \
             --dangerously-skip-permissions \
             --allowedTools "Bash" \
             --verbose \
             --output-format stream-json \
           | tee claude-run.jsonl \
-          | grep -o '"command":"[^"]*"' \
-          | grep -E "AGENTS\.md|postman/skills" || true
+          | jq -r '
+              if .type == "assistant" then
+                (.message.content[]? | select(.type == "tool_use" and .name == "Bash") | "$ " + .input.command)
+              elif .type == "result" then
+                "\n--- result ---\n" + .result
+              else empty end
+            '
+          exit "${PIPESTATUS[0]}"
