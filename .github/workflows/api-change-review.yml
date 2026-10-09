@@ -1,4 +1,4 @@
-name: Headless PR Reviewer
+name: API change review
 
 on:
   pull_request:
@@ -31,14 +31,25 @@ jobs:
       - name: Fetch the base branch for the diff
         run: git fetch origin "${{ github.event.pull_request.base.ref }}"
 
-      - name: Run the headless agent
+      - name: Check whether the repo's skills are current
+        continue-on-error: true
+        run: postman skills status
+
+      - name: Run the agent with the repo's Postman skills
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PROMPT="$(cat agents/headless-pr-agent.md)
+          PROMPT="$(cat agents/api-change-reviewer.md)
 
           This is PR #${{ github.event.pull_request.number }} in ${{ github.repository }}.
-          The base branch is origin/${{ github.event.pull_request.base.ref }} — diff against it."
+          The base branch is origin/${{ github.event.pull_request.base.ref }}. Diff against it."
 
-          claude -p "$PROMPT" --dangerously-skip-permissions --allowedTools "Bash"
+          claude -p "$PROMPT" \
+            --dangerously-skip-permissions \
+            --allowedTools "Bash" \
+            --verbose \
+            --output-format stream-json \
+          | tee claude-run.jsonl \
+          | grep -o '"command":"[^"]*"' \
+          | grep -E "AGENTS\.md|postman/skills" || true

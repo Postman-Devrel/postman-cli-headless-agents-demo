@@ -1,49 +1,63 @@
-# Postman Headless: The Agentic Era
+# API change review demo
 
-The CLI is to agents what the UI is to humans. The slides cover the
-everyday case — an agent lints a contract, generates a collection and a
-mock from it, and asks the Context Graph who depends on an endpoint, all
-from a plain-English prompt. This repo is the part that isn't slides: what
-happens when nobody prompts the agent at all.
+The CLI is what lets an agent call Postman without a person at the
+keyboard. This repo shows the everyday case end to end: an agent reads a
+pull request, decides whether the change is risky, and if it is, asks the
+right question before it comments.
 
-You clone it, make a real breaking change to `openapi.yaml`, and open a
-real pull request. From that point on you're not driving anything — a
-GitHub Action triggers a headless agent that reads the diff, decides for
-itself whether the change is risky, and if it is, reaches for the same
-`postman context-graph ask` shown on the slides — on its own initiative —
-then posts what it found as a comment on your PR.
+Clone it, make a real breaking change to `openapi.yaml`, and open a real
+pull request. From that point on you are not driving anything. A GitHub
+Action runs the agent defined in `agents/api-change-reviewer.md`. It reads
+the diff, decides for itself whether the change is risky, and if it is,
+asks the Context Graph who depends on the endpoint, then posts what it
+found as a comment on your PR.
+
+The repo carries its own instructions for the agent to follow. `postman
+init` wrote `AGENTS.md` and `postman/skills/` here, and both are
+committed. The agent reads `AGENTS.md` first, which points it to the
+skill for whatever it needs to do next. Nothing in
+`agents/api-change-reviewer.md` hardcodes a CLI command; the skills cover
+that part.
+
+If you install the Postman plugin for Claude Code instead of relying on
+the committed skills, you get the same content a different way. From
+`postman skills --help`: "The Claude Code plugin delivers the same
+skills separately." Either source works. The plugin is for a developer's
+own agent; the committed skills are for CI, where nothing else gets
+installed.
 
 ---
 
 ## 0. One-time setup (repo owner only)
 
-Skip this if you're just cloning to watch — it's already done. If you're
-setting this repo up fresh:
+Skip this if you are just cloning to watch; it is already done. If you
+are setting this repo up fresh:
 
 ```bash
-npm install -g postman-cli@latest      # known-good: 1.62.0
+npm install -g postman-cli@latest      # known-good: 1.71.0
 postman login                          # decides which team's Context Graph answers
-gh secret set POSTMAN_API_KEY          # paste the key when prompted — needed by Act 3's job
-gh secret set ANTHROPIC_API_KEY        # from console.anthropic.com/settings/keys — lets Act 3 run Claude Code headless
+postman init                           # writes postman/skills/ and AGENTS.md; commit them
+gh secret set POSTMAN_API_KEY          # paste the key when prompted; the workflow needs it
+gh secret set ANTHROPIC_API_KEY        # from console.anthropic.com/settings/keys; runs Claude Code in CI
 ```
 
-Act 3's workflow (`.github/workflows/headless-agent.yml`) runs on
-`pull_request` against `openapi.yaml`. GitHub does not expose secrets to a
-PR opened from a fork, so **open PRs from a branch on this repo**, not from
-a fork, or Act 3's job will fail on the Postman login step.
+The workflow (`.github/workflows/api-change-review.yml`) runs on
+`pull_request` against `openapi.yaml`. GitHub does not expose secrets to
+a PR opened from a fork, so open PRs from a branch on this repo, not from
+a fork, or the job will fail at the Postman login step.
 
 ---
 
 ## 1. Clone it
 
 ```bash
-git clone https://github.com/avdev4j/postman-cli-headless-agents.git
-cd postman-cli-headless-agents
+git clone https://github.com/Postman-Devrel/postman-plugin-pr-review-demo.git
+cd postman-plugin-pr-review-demo
 ```
 
 `openapi.yaml` documents `GET /api/patients/{id}` on `patients-service`,
-with a checked-in collection and mock already in the repo — this is a live
-API, not a cold start; the slides already showed the cold-start case.
+with a checked-in collection and mock already in the repo. This is a
+live API, not a cold start.
 
 ## 2. Break it
 
@@ -52,16 +66,16 @@ git checkout -b remove-blood-type
 ```
 
 Edit `openapi.yaml`: remove the `blood_type` property from the `Patient`
-schema. It's the field this repo is built to remove, on purpose:
+schema. It is the field this repo is built to remove, on purpose:
 
-- **It's clinical data a downstream system plausibly reads** — an ordering
-  or lab-integration service, say — so it's a believable thing for the
-  agent to flag as risky, not a coin flip.
-- **`patients-service` itself never reads it back** — nothing in this
-  repo's own collection asserts on it, so the run stays green either way.
-  That's the whole point: locally, honestly, nothing looks wrong. The only
-  way to know it isn't is to ask who else depends on this endpoint — which
-  is exactly what the headless agent is about to do, unprompted.
+- It is clinical data a downstream system plausibly reads, for example
+  an ordering or lab-integration service. That gives the agent a real
+  reason to treat the change as risky.
+- `patients-service` itself never reads the field back, so nothing in
+  this repo's own collection asserts on it, and the run stays green
+  either way. Locally, honestly, nothing looks wrong. Knowing whether it
+  really is wrong means asking who else depends on this endpoint, which
+  is exactly what the agent does next, unprompted.
 
 ## 3. Ship it
 
@@ -74,11 +88,11 @@ gh pr create --fill
 
 ## 4. Watch it
 
-Open the **Actions** tab, or just wait — within a minute or two, the
-**Headless Reviewer** job runs and posts a comment on your PR. Nobody typed
-a prompt for that run; the trigger was the PR itself. Read what it decided:
-whether it judged the change risky, whether it asked the graph, and what
-the graph's evidence said about who's actually affected.
+Open the Actions tab, or just wait. Within a minute or two, the API
+change review job runs and posts a comment on your PR. Nobody typed a
+prompt for that run; the trigger was the PR itself. Read what it
+decided: whether it judged the change risky, whether it asked the graph,
+and what the graph's evidence said about who is actually affected.
 
 ---
 
@@ -87,16 +101,19 @@ the graph's evidence said about who's actually affected.
 | File | Role |
 |---|---|
 | [`openapi.yaml`](openapi.yaml) | The one committed contract. |
-| [`postman/collections/Patients Service/`](postman/collections/Patients%20Service/) | The checked-in test suite — the headless agent runs this against a fresh mock, it never regenerates it itself. |
+| [`postman/collections/Patients Service/`](postman/collections/Patients%20Service/) | The checked-in test suite. The agent runs this against a fresh mock; it never regenerates the suite itself. |
 | [`postman/mocks/patients-service/`](postman/mocks/patients-service/) | The mock, regenerated by the agent from whatever version of the contract is in the PR. |
-| [`agents/headless-pr-agent.md`](agents/headless-pr-agent.md) | What the headless agent actually reasons through — not a fixed script, a set of judgment calls. |
-| [`.github/workflows/headless-agent.yml`](.github/workflows/headless-agent.yml) | The trigger: on every PR touching `openapi.yaml`, run the agent, headless. |
+| [`AGENTS.md`](AGENTS.md) | Written by `postman init`. Points the agent to the skill for whatever it needs to do next. |
+| [`postman/skills/`](postman/skills/) | Written by `postman init` and committed, so CI has them without installing anything beyond the CLI. |
+| [`agents/api-change-reviewer.md`](agents/api-change-reviewer.md) | What the agent actually reasons through: a set of judgment calls, not a fixed script. |
+| [`.github/workflows/api-change-review.yml`](.github/workflows/api-change-review.yml) | The trigger: on every PR touching `openapi.yaml`, run the agent. |
 
 ## Troubleshooting
 
 | Issue | Fix |
 |---|---|
-| The PR comment says the graph doesn't know this API | The `postman login` account behind `POSTMAN_API_KEY` isn't on a team with the estate ingested. Re-issue the secret from an account that is. |
-| The job fails on `postman login` | Almost always a fork PR — secrets aren't passed to those. Push the branch to this repo instead. |
-| The job fails on `claude -p` with an auth error | `ANTHROPIC_API_KEY` isn't set (or is wrong) as a repo secret — see [section 0](#0-one-time-setup-repo-owner-only). |
-| No comment shows up on the PR | Check the Actions tab for the run's logs — the agent still executed, it just may have decided (correctly) that nothing about your change was risky, and said so in one line instead of a long comment. |
+| The PR comment says the graph does not know this API | The `postman login` account behind `POSTMAN_API_KEY` is not on a team with the estate ingested. Re-issue the secret from an account that is. |
+| The job fails on `postman login` | Almost always a fork PR; secrets are not passed to those. Push the branch to this repo instead. |
+| The job fails on `claude -p` with an auth error | `ANTHROPIC_API_KEY` is not set, or is wrong, as a repo secret. See [section 0](#0-one-time-setup-repo-owner-only). |
+| No comment shows up on the PR | Check the Actions tab for the run's logs. The agent still ran; it may have decided, correctly, that nothing about your change was risky, and said so in one line instead of a long comment. |
+| The skills check step reports "behind" or "modified" | Run `postman skills update` and commit the result. This never fails the job on its own. |
